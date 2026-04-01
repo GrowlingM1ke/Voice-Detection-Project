@@ -9,6 +9,8 @@ dependencies = [
     "torch>=2.3.0",
     "torchvision>=0.18.0",
     "torchaudio>=2.3.0",
+    "timm>=0.9.0",
+    "lejepa @ git+https://github.com/galilai-group/lejepa.git",
 
     # Audio preprocessing
     "torch-audiomentations>=0.11.0",
@@ -58,5 +60,19 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/voice_detection"]
+
+[tool.uv]
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
