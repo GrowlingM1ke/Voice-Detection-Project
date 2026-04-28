@@ -72,6 +72,9 @@ class SpeakerChunkDataset(Dataset):
         data, _ = sf.read(row["chunk_path"], dtype="float32")
         waveform = torch.from_numpy(data).unsqueeze(0)  # (1, T)
 
+        rms = waveform.square().mean().sqrt()
+        waveform = waveform / (rms + 1e-9)
+
         mel = self._mel(waveform)          # (1, n_mels, T_frames)
         log_mel = torch.log(mel + 1e-9)   # log compression
 

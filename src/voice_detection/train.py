@@ -23,6 +23,103 @@ from voice_detection.model import SIGReg, ViTEncoder
 
 
 # ---------------------------------------------------------------------------
+# Embedding visualisation
+# ---------------------------------------------------------------------------
+
+@torch.inference_mode()
+def visualize_embeddings(
+    net: ViTEncoder,
+    val_ds: SpeakerChunkDataset,
+    device: torch.device,
+    save_path: str | Path,
+    num_speakers: int = 10,
+    chunks_per_speaker: int = 50,
+) -> None:
+    """UMAP scatter + cosine similarity heatmap for a random speaker subset.
+
+    Overwrites *save_path* on every call so only the latest visualisation
+    (corresponding to the current best.pt) is kept.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import umap
+
+    net.eval()
+
+    # Pick random speakers that have enough chunks
+    all_speakers = sorted(val_ds.speaker_to_idx.keys())
+    rng = random.Random(0)
+    rng.shuffle(all_speakers)
+    chosen = all_speakers[:num_speakers]
+    idx_map = {spk: val_ds.speaker_to_idx[spk] for spk in chosen}
+
+    embs_list: list[np.ndarray] = []
+    labels_list: list[str] = []
+
+    for spk in chosen:
+        rows = val_ds.df[val_ds.df["speaker_id"] == spk].head(chunks_per_speaker)
+        for _, row in rows.iterrows():
+            import soundfile as sf
+            data, _ = sf.read(row["chunk_path"], dtype="float32")
+            waveform = torch.from_numpy(data).unsqueeze(0)
+            rms = waveform.square().mean().sqrt()
+            waveform = waveform / (rms + 1e-9)
+            mel = val_ds._mel(waveform)
+            log_mel = torch.log(mel + 1e-9)
+            if val_ds._normalize:
+                log_mel = (log_mel - log_mel.mean()) / (log_mel.std() + 1e-9)
+            spec = log_mel.unsqueeze(0)[..., :300].to(device)
+            emb = net.embed(spec)
+            emb = F.normalize(emb.float(), dim=1).cpu().numpy()
+            embs_list.append(emb[0])
+            labels_list.append(spk)
+
+    embs = np.array(embs_list)          # (N, embed_dim)
+    labels_arr = np.array(labels_list)
+
+    # UMAP projection
+    reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+    coords = reducer.fit_transform(embs)  # (N, 2)
+
+    # Cosine similarity between speaker centroids
+    centroids = np.stack(
+        [embs[labels_arr == spk].mean(0) for spk in chosen]
+    )
+    norms = np.linalg.norm(centroids, axis=1, keepdims=True)
+    centroids_norm = centroids / (norms + 1e-9)
+    sim_matrix = centroids_norm @ centroids_norm.T  # (num_speakers, num_speakers)
+
+    # Plot
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # --- UMAP scatter ---
+    cmap = plt.cm.get_cmap("tab10", num_speakers)
+    for i, spk in enumerate(chosen):
+        mask = labels_arr == spk
+        axes[0].scatter(coords[mask, 0], coords[mask, 1], s=12, color=cmap(i), label=spk, alpha=0.7)
+    axes[0].set_title("UMAP of speaker embeddings (val)")
+    axes[0].legend(markerscale=2, fontsize=7, loc="best")
+    axes[0].set_xlabel("UMAP-1")
+    axes[0].set_ylabel("UMAP-2")
+
+    # --- Cosine similarity heatmap ---
+    im = axes[1].imshow(sim_matrix, vmin=-1, vmax=1, cmap="coolwarm")
+    short_labels = [spk.split("_", 1)[-1] for spk in chosen]
+    axes[1].set_xticks(range(num_speakers))
+    axes[1].set_yticks(range(num_speakers))
+    axes[1].set_xticklabels(short_labels, rotation=45, ha="right", fontsize=8)
+    axes[1].set_yticklabels(short_labels, fontsize=8)
+    axes[1].set_title("Cosine similarity — speaker centroids")
+    fig.colorbar(im, ax=axes[1])
+
+    fig.tight_layout()
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=120)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -284,6 +381,9 @@ def train(cfg: Config) -> None:
                 best_eer = eer
                 torch.save(net.state_dict(), Path(cfg.checkpoint_dir) / "best.pt")
                 print(f"  New best EER — saved best.pt")
+                viz_path = Path(cfg.log_dir) / "embedding_viz.png"
+                visualize_embeddings(net, val_ds, device, viz_path)
+                print(f"  Embedding visualisation saved to {viz_path}")
 
         # ---- Periodic checkpoint ----
         if (epoch + 1) % cfg.save_every == 0:

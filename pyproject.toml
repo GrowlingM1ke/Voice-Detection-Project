@@ -44,6 +44,7 @@ dev = [
     "matplotlib>=3.9.0",
     "librosa>=0.10.2",      # for visualization/debugging only
     "seaborn>=0.13.0",
+    "umap-learn>=0.5.6",
     "ipykernel>=6.29.0",
 ]
 
@@ -53,6 +54,7 @@ dev = [
     "matplotlib>=3.9.0",
     "librosa>=0.10.2",
     "seaborn>=0.13.0",
+    "umap-learn>=0.5.6",
     "ipykernel>=6.29.0",
 ]
 
